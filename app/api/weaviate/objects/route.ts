@@ -14,20 +14,25 @@ export async function POST(request: NextRequest) {
     }
 
     // Create Weaviate client
+    const parsed = new URL(url);
+    const httpSecure = parsed.protocol === 'https:';
+    const httpHost = parsed.hostname;
+    const httpPort = parsed.port ? parseInt(parsed.port) : (httpSecure ? 443 : 80);
+
     let client: WeaviateClient;
 
     if (apiKey) {
       client = await weaviate.connectToCustom({
-        httpHost: url.replace(/^https?:\/\//, ''),
-        httpPort: url.startsWith('https') ? 443 : 80,
-        httpSecure: url.startsWith('https'),
+        httpHost,
+        httpPort,
+        httpSecure,
         authCredentials: new ApiKey(apiKey),
       });
     } else {
       client = await weaviate.connectToCustom({
-        httpHost: url.replace(/^https?:\/\//, ''),
-        httpPort: url.startsWith('https') ? 443 : 80,
-        httpSecure: url.startsWith('https'),
+        httpHost,
+        httpPort,
+        httpSecure,
       });
     }
 
