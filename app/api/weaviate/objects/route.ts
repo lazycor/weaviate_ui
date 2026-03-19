@@ -23,18 +23,27 @@ export async function POST(request: NextRequest) {
       ...(apiKey && { apiKey: new ApiKey(apiKey) }),
     });
 
-    const result = await client.data
-      .getter()
+    // Fetch property names for the GraphQL fields list
+    const classSchema = await client.schema.classGetter().withClassName(className).do();
+    const propNames = classSchema.properties?.map((p: any) => p.name).join(' ') ?? '';
+
+    const result = await client.graphql
+      .get()
       .withClassName(className)
       .withLimit(limit)
       .withOffset(offset)
+      .withFields(`_additional { id vector } ${propNames}`)
       .do();
 
-    const objects = (result.objects ?? []).map((obj: any) => ({
-      id: obj.id,
-      properties: obj.properties,
-      vector: obj.vector,
-    }));
+    const raw: any[] = result?.data?.Get?.[className] ?? [];
+    const objects = raw.map((obj) => {
+      const { _additional, ...properties } = obj;
+      return {
+        id: _additional?.id,
+        properties,
+        vector: _additional?.vector,
+      };
+    });
 
     return NextResponse.json({
       success: true,
