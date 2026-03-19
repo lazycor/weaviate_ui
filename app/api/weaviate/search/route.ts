@@ -1,17 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import weaviate, { WeaviateClient, ApiKey } from 'weaviate-client';
+import weaviate, { ApiKey } from 'weaviate-ts-client';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const {
-      url,
-      apiKey,
-      className,
-      searchText,
-      filters,
-      limit = 100
-    } = body;
+    const { url, apiKey, className, searchText, filters, limit = 100 } = body;
 
     if (!url || !className) {
       return NextResponse.json(
@@ -20,59 +13,57 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create Weaviate client
     const parsed = new URL(url);
-    const httpSecure = parsed.protocol === 'https:';
-    const httpHost = parsed.hostname;
-    const httpPort = parsed.port ? parseInt(parsed.port) : (httpSecure ? 443 : 80);
+    const scheme = parsed.protocol === 'https:' ? 'https' : 'http';
+    const host = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
 
-    let client: WeaviateClient;
+    const client = weaviate.client({
+      scheme,
+      host,
+      ...(apiKey && { apiKey: new ApiKey(apiKey) }),
+    });
 
-    if (apiKey) {
-      client = await weaviate.connectToCustom({
-        httpHost,
-        httpPort,
-        httpSecure,
-        authCredentials: new ApiKey(apiKey),
+    let objects: any[];
+
+    if (searchText && searchText.trim() !== '') {
+      // Get property names for the GraphQL query fields
+      const classSchema = await client.schema.classGetter().withClassName(className).do();
+      const propNames = classSchema.properties?.map((p: any) => p.name).join(' ') ?? '';
+
+      const result = await client.graphql
+        .get()
+        .withClassName(className)
+        .withNearText({ concepts: [searchText] })
+        .withLimit(limit)
+        .withFields(`_additional { id vector } ${propNames}`)
+        .do();
+
+      const raw: any[] = result?.data?.Get?.[className] ?? [];
+      objects = raw.map((obj) => {
+        const { _additional, ...properties } = obj;
+        return {
+          id: _additional?.id,
+          properties,
+          vector: _additional?.vector,
+        };
       });
     } else {
-      client = await weaviate.connectToCustom({
-        httpHost,
-        httpPort,
-        httpSecure,
-      });
+      const result = await client.data
+        .getter()
+        .withClassName(className)
+        .withLimit(limit)
+        .do();
+
+      objects = (result.objects ?? []).map((obj: any) => ({
+        id: obj.id,
+        properties: obj.properties,
+        vector: obj.vector,
+      }));
     }
 
-    const collection = client.collections.get(className);
-
-    let result;
-
-    // If search text is provided, use nearText search
-    if (searchText && searchText.trim() !== '') {
-      result = await collection.query.nearText(searchText, {
-        limit,
-      });
-    }
-    // Otherwise, fetch all objects
-    else {
-      result = await collection.query.fetchObjects({
-        limit,
-      });
-    }
-
-    // Format the response
-    let objects = result.objects.map((obj: any) => ({
-      id: obj.uuid,
-      properties: obj.properties,
-      vector: obj.vectors?.default,
-    }));
-
-    // Apply client-side filters if provided
     if (filters && Array.isArray(filters) && filters.length > 0) {
       objects = applyFilters(objects, filters);
     }
-
-    await client.close();
 
     return NextResponse.json({
       success: true,
@@ -88,12 +79,11 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Apply client-side filters to results
 function applyFilters(objects: any[], filters: any[]) {
   if (!filters || filters.length === 0) return objects;
 
-  return objects.filter(obj => {
-    return filters.every(filter => {
+  return objects.filter((obj) =>
+    filters.every((filter) => {
       const value = obj.properties[filter.key];
       const filterValue = filter.value;
 
@@ -115,6 +105,6 @@ function applyFilters(objects: any[], filters: any[]) {
         default:
           return true;
       }
-    });
-  });
+    })
+  );
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import weaviate, { WeaviateClient, ApiKey } from 'weaviate-client';
+import weaviate, { ApiKey } from 'weaviate-ts-client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,51 +13,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create Weaviate client
     const parsed = new URL(url);
-    const httpSecure = parsed.protocol === 'https:';
-    const httpHost = parsed.hostname;
-    const httpPort = parsed.port ? parseInt(parsed.port) : (httpSecure ? 443 : 80);
+    const scheme = parsed.protocol === 'https:' ? 'https' : 'http';
+    const host = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
 
-    let client: WeaviateClient;
-
-    if (apiKey) {
-      client = await weaviate.connectToCustom({
-        httpHost,
-        httpPort,
-        httpSecure,
-        authCredentials: new ApiKey(apiKey),
-      });
-    } else {
-      client = await weaviate.connectToCustom({
-        httpHost,
-        httpPort,
-        httpSecure,
-      });
-    }
-
-    // Get collection
-    const collection = client.collections.get(className);
-
-    // Fetch objects with pagination
-    const result = await collection.query.fetchObjects({
-      limit,
-      offset,
+    const client = weaviate.client({
+      scheme,
+      host,
+      ...(apiKey && { apiKey: new ApiKey(apiKey) }),
     });
 
-    // Format the response
-    const objects = result.objects.map((obj) => ({
-      id: obj.uuid,
-      properties: obj.properties,
-      vector: obj.vectors?.default,
-    }));
+    const result = await client.data
+      .getter()
+      .withClassName(className)
+      .withLimit(limit)
+      .withOffset(offset)
+      .do();
 
-    await client.close();
+    const objects = (result.objects ?? []).map((obj: any) => ({
+      id: obj.id,
+      properties: obj.properties,
+      vector: obj.vector,
+    }));
 
     return NextResponse.json({
       success: true,
       objects,
-      total: result.objects.length,
+      total: objects.length,
     });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
