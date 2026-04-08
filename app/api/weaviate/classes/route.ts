@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import weaviate, { WeaviateClient, ApiKey } from 'weaviate-client';
+import weaviate, { ApiKey } from 'weaviate-ts-client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,29 +13,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create Weaviate client
-    let client: WeaviateClient;
+    const parsed = new URL(url);
+    const scheme = parsed.protocol === 'https:' ? 'https' : 'http';
+    const host = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
 
-    if (apiKey) {
-      client = await weaviate.connectToCustom({
-        httpHost: url.replace(/^https?:\/\//, ''),
-        httpPort: url.startsWith('https') ? 443 : 80,
-        httpSecure: url.startsWith('https'),
-        authCredentials: new ApiKey(apiKey),
-      });
-    } else {
-      client = await weaviate.connectToCustom({
-        httpHost: url.replace(/^https?:\/\//, ''),
-        httpPort: url.startsWith('https') ? 443 : 80,
-        httpSecure: url.startsWith('https'),
-      });
-    }
+    const client = weaviate.client({
+      scheme,
+      host,
+      ...(apiKey && { apiKey: new ApiKey(apiKey) }),
+    });
 
-    // Get all collections/classes
-    const collections = await client.collections.listAll();
-    const classNames = Object.keys(collections);
-
-    await client.close();
+    const schema = await client.schema.getter().do();
+    const classNames = schema.classes?.map((c) => c.class!) ?? [];
 
     return NextResponse.json({
       success: true,

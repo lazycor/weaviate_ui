@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import weaviate, { WeaviateClient, ApiKey } from 'weaviate-client';
+import weaviate, { ApiKey } from 'weaviate-ts-client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,46 +13,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create Weaviate client
-    let client: WeaviateClient;
+    const parsed = new URL(url);
+    const scheme = parsed.protocol === 'https:' ? 'https' : 'http';
+    const host = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
 
-    if (apiKey) {
-      client = await weaviate.connectToCustom({
-        httpHost: url.replace(/^https?:\/\//, ''),
-        httpPort: url.startsWith('https') ? 443 : 80,
-        httpSecure: url.startsWith('https'),
-        authCredentials: new ApiKey(apiKey),
-      });
-    } else {
-      client = await weaviate.connectToCustom({
-        httpHost: url.replace(/^https?:\/\//, ''),
-        httpPort: url.startsWith('https') ? 443 : 80,
-        httpSecure: url.startsWith('https'),
-      });
-    }
-
-    // Get collection
-    const collection = client.collections.get(className);
-
-    // Fetch objects with pagination
-    const result = await collection.query.fetchObjects({
-      limit,
-      offset,
+    const client = weaviate.client({
+      scheme,
+      host,
+      ...(apiKey && { apiKey: new ApiKey(apiKey) }),
     });
 
-    // Format the response
-    const objects = result.objects.map((obj) => ({
-      id: obj.uuid,
-      properties: obj.properties,
-      vector: obj.vectors?.default,
-    }));
+    // Fetch property names for the GraphQL fields list
+    const classSchema = await client.schema.classGetter().withClassName(className).do();
+    const propNames = classSchema.properties?.map((p: any) => p.name).join(' ') ?? '';
 
-    await client.close();
+    const result = await client.graphql
+      .get()
+      .withClassName(className)
+      .withLimit(limit)
+      .withOffset(offset)
+      .withFields(`_additional { id vector } ${propNames}`)
+      .do();
+
+    const raw: any[] = result?.data?.Get?.[className] ?? [];
+    const objects = raw.map((obj) => {
+      const { _additional, ...properties } = obj;
+      return {
+        id: _additional?.id,
+        properties,
+        vector: _additional?.vector,
+      };
+    });
 
     return NextResponse.json({
       success: true,
       objects,
-      total: result.objects.length,
+      total: objects.length,
     });
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';

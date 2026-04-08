@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import weaviate, { WeaviateClient, ApiKey } from 'weaviate-client';
+import weaviate, { ApiKey } from 'weaviate-ts-client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,35 +13,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create Weaviate client
-    let client: WeaviateClient;
+    const parsed = new URL(url);
+    const scheme = parsed.protocol === 'https:' ? 'https' : 'http';
+    const host = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
 
-    if (apiKey) {
-      client = await weaviate.connectToCustom({
-        httpHost: url.replace(/^https?:\/\//, ''),
-        httpPort: url.startsWith('https') ? 443 : 80,
-        httpSecure: url.startsWith('https'),
-        authCredentials: new ApiKey(apiKey),
-      });
-    } else {
-      client = await weaviate.connectToCustom({
-        httpHost: url.replace(/^https?:\/\//, ''),
-        httpPort: url.startsWith('https') ? 443 : 80,
-        httpSecure: url.startsWith('https'),
-      });
-    }
+    const client = weaviate.client({
+      scheme,
+      host,
+      ...(apiKey && { apiKey: new ApiKey(apiKey) }),
+    });
 
-    // Test connection by checking if Weaviate is ready
-    const isReady = await client.isReady();
+    const isReady = await client.misc.readyChecker().do();
 
     if (isReady) {
-      await client.close();
       return NextResponse.json({
         success: true,
         message: 'Successfully connected to Weaviate'
       });
     } else {
-      await client.close();
       return NextResponse.json(
         { error: 'Weaviate is not ready' },
         { status: 503 }
